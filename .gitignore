@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+backend/.venv/
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+
+# Node
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+.pnpm-debug.log
+
+# React build
+frontend/build/
+build/
+dist/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+coverage/
+htmlcov/
+
+# Audio assets (local binaries)
+backend/audio/*.mp3
+backend/audio/*.wav
+
+# Misc
+*.sqlite3

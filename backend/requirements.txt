@@ -1,0 +1,4 @@
+flask
+numpy
+# Add other dependencies required by the backend here
+flask-cors
