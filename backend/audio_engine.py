@@ -42,9 +42,9 @@ except Exception as exc:
 AUDIO_DIR = Path(__file__).parent / "audio"   # put .mp3 files here
 
 STATE_TRACK_MAP = {
-    "Focused":  "focus.mp3",
-    "Relaxed":  "calm.mp3",
-    "Fatigued": "energy.mp3",
+    "Focused":  "Desh.mp3",
+    "Relaxed":  "Ahir bhairav.mp3",
+    "Fatigued": "Raag Darbari.mp3",
 }
 
 # How long (seconds) a new state must persist before we switch tracks

@@ -8,3 +8,8 @@ Structure:
 - frontend/: React UI
 
 See project README or run instructions in workspace for details.
+
+to run
+-backend -- python app.py
+-frontend -- npm start 
+-c++ code -- \capsule-public-v1.7.0\Example\Win\build\Release -- CapsuleFilteredSignalExample.exe

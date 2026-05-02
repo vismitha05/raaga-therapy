@@ -1,0 +1,4 @@
+{
+  "enableCMake": true,
+  "sourceDirectory": "capsule-public-v1.7.0\\example\\win"
+}
