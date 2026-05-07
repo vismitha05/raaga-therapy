@@ -19,16 +19,29 @@ void initSocket() {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-
     sockaddr_in server;
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
     server.sin_family = AF_INET;
-    server.sin_port = htons(5000);
+    server.sin_port = htons(5001);
 
-    connect(sock, (struct sockaddr*)&server, sizeof(server));
+    while (true) {
+        sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock == INVALID_SOCKET) {
+            std::cerr << "[C++] Failed to create socket, retrying...\n";
+            std::this_thread::sleep_for(1s);
+            continue;
+        }
 
-    std::cout << "[C++] Connected to Python backend\n";
+        int rc = connect(sock, (struct sockaddr*)&server, sizeof(server));
+        if (rc == 0) {
+            std::cout << "[C++] Connected to Python backend\n";
+            break;
+        }
+
+        std::cerr << "[C++] Python backend not ready on 127.0.0.1:5001, retrying...\n";
+        closesocket(sock);
+        std::this_thread::sleep_for(1s);
+    }
 }
 
 // ---------------- CAPSULE OBJECTS ----------------
@@ -43,11 +56,16 @@ uint32_t deviceConnectionTime = 0;
 bool bipolarMode = false;
 bool clientStopRequested = false;
 bool clientDisconnecting = false;
+bool sessionStartRequested = false;
+bool deviceReconnectRequested = false;
+uint32_t lastReconnectAttemptTime = 0;
+bool deviceRescanRequested = false;
+uint32_t lastRescanAttemptTime = 0;
 
 // ---------------- EEG CALLBACK ----------------
 void onSessionEEGData(clCSession, clCEEGTimedData eegData) {
 
-    std::cout << "[C++] Received EEG data\n";
+    std::cout << "[C++] EEG data received\n";
 
     int samples = clCEEGTimedData_GetSamplesCount(eegData);
     int channels = clCEEGTimedData_GetChannelsCount(eegData);
@@ -77,13 +95,35 @@ void onSessionStarted(clCSession) {
 }
 
 void onConnectionStateChanged(clCDevice, clCDeviceConnectionState state) {
-    if (state != clC_SE_Connected) {
-        std::cout << "[C++] Device disconnected\n";
+    std::cout << "[C++] Device state changed: " << (int)state << "\n";
+
+    if (state == clC_SE_Connected) {
+        std::cout << "[C++] Device connected\n";
+        deviceConnectionTime = s_time;
+        sessionStartRequested = false;
+        deviceReconnectRequested = false;
+        deviceRescanRequested = false;
         return;
     }
 
-    std::cout << "[C++] Device connected\n";
-    deviceConnectionTime = s_time;
+    if (state == clC_SE_Disconnected) {
+        std::cout << "[C++] Device disconnected\n";
+        session = nullptr;
+        deviceConnectionTime = 0;
+        sessionStartRequested = false;
+        deviceReconnectRequested = true;
+        return;
+    }
+
+    if (state == clC_SE_UnsupportedConnection) {
+        std::cout << "[C++] Device connection unsupported (state=2). Will rescan devices...\n";
+        session = nullptr;
+        deviceConnectionTime = 0;
+        sessionStartRequested = false;
+        deviceReconnectRequested = false;
+        deviceRescanRequested = true;
+        return;
+    }
 }
 
 void onDeviceList(clCDeviceLocator locator, clCDeviceInfoList devices, clCDeviceLocatorFailReason error) {
@@ -121,7 +161,7 @@ void onConnected(clCClient client) {
 
 void onDisconnected(clCClient, clCDisconnectReason reason) {
     std::cout << "[C++] Disconnected: " << (int)reason << std::endl;
-    exit(0);
+    clientStopRequested = true;
 }
 
 // ---------------- MAIN LOOP ----------------
@@ -169,6 +209,48 @@ int main(int argc, char* argv[]) {
     while (true) {
         clCClient_Update(client);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        s_time += 50;
+
+        if (deviceReconnectRequested && device &&
+            s_time >= lastReconnectAttemptTime + 2000) {
+            lastReconnectAttemptTime = s_time;
+            std::cout << "[C++] Attempting device reconnect...\n";
+            clCDevice_Connect(device);
+        }
+
+        if (deviceRescanRequested && locator &&
+            s_time >= lastRescanAttemptTime + 3000) {
+            lastRescanAttemptTime = s_time;
+            std::cout << "[C++] Requesting device list again...\n";
+            clCDeviceLocator_RequestDevices(locator, 15);
+        }
+
+        if (deviceConnectionTime && !session && !sessionStartRequested &&
+            s_time >= deviceConnectionTime + 2000) {
+
+            sessionStartRequested = true;
+            auto error = clC_Error_OK;
+            session = clCClient_CreateSessionWithMonopolarChannelsWithError(client, device, &error);
+
+            if (!session || error != clC_Error_OK) {
+                std::cerr << "[C++] Failed to create session. error=" << (int)error << "\n";
+                session = nullptr;
+                sessionStartRequested = false;
+            }
+            else {
+                std::cout << "[C++] Session created\n";
+
+                auto startedEvent = clCSession_GetOnSessionStartedEvent(session);
+                clCSessionDelegate_Set(startedEvent, onSessionStarted);
+
+                auto eegEvent = clCSession_GetOnSessionEEGDataEvent(session);
+                clCSessionDelegateSessionEEGData_Set(eegEvent, onSessionEEGData);
+
+                std::cout << "[C++] Starting session...\n";
+                clCSession_Start(session);
+                clCDevice_SwitchMode(device, clC_DM_Signal);
+            }
+        }
 
         if (GetAsyncKeyState('Q')) {
             break;

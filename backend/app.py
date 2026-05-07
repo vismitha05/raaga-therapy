@@ -1,13 +1,14 @@
 """
 app.py
 ------
-Flask backend for the real-time neurofeedback system.
+Flask backend for the real-time Neiry neurofeedback system.
 
 Endpoints:
-  GET  /data          → latest EEG sample + audio status
-  GET  /history       → last N samples (for the history graph)
-  POST /mode          → switch Study / Relax mode
-  POST /volume        → adjust audio volume
+  GET  /data          -> latest EEG sample + audio status + sim flag
+  GET  /history       -> last 120 samples (for trend graphs)
+  POST /mode          -> switch Study / Relax mode
+  POST /volume        -> adjust audio volume
+  GET  /health        -> liveness check + connection status
 
 CORS is enabled so the React dev-server (port 3000) can reach this API.
 """
@@ -21,82 +22,70 @@ import collections
 from eeg_listener import EEGListener
 from audio_engine import AudioEngine
 
-# ─────────────────────────────────────────────
-#  App setup
-# ─────────────────────────────────────────────
+# ─── App setup ────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
-CORS(app)   # Allow cross-origin requests from React frontend
+CORS(app)
 
-# ─────────────────────────────────────────────
-#  Global singletons
-# ─────────────────────────────────────────────
+# ─── Global singletons ────────────────────────────────────────────────────────
 
-eeg = EEGListener()
+eeg   = EEGListener()
 audio = AudioEngine(mode="Study")
 
-# Circular buffer: stores last 120 samples (~60 s at 2 Hz API polling)
 HISTORY_MAXLEN = 120
 history: collections.deque = collections.deque(maxlen=HISTORY_MAXLEN)
 history_lock = threading.Lock()
 
-# ─────────────────────────────────────────────
-#  Background integration loop
-# ─────────────────────────────────────────────
+# ─── Integration loop ────────────────────────────────────────────────────────
 
 def _integration_loop():
-    """
-    Runs in a daemon thread.
-    Every 200 ms: reads latest EEG sample → updates audio engine → appends to history.
-    Decoupled from HTTP request cycle for consistent low-latency updates.
-    """
+    """5 Hz loop: EEG sample -> audio engine -> history buffer."""
     while True:
         sample = eeg.latest
         if sample is not None:
-            # Feed state into audio engine (debounce logic lives inside AudioEngine)
             audio.update(sample.state)
-
-            # Append timestamped snapshot to history buffer
             entry = sample.to_dict()
             entry["timestamp"] = time.time()
             with history_lock:
                 history.append(entry)
+        time.sleep(0.2)
 
-        time.sleep(0.2)   # 5 Hz integration rate
+# ─── Routes ──────────────────────────────────────────────────────────────────
 
+@app.route("/health")
+def health():
+    """Liveness + connection status."""
+    return jsonify({
+        "ok":        True,
+        "simulating": eeg.simulating,
+        "has_data":  eeg.latest is not None,
+    })
 
-# ─────────────────────────────────────────────
-#  API Routes
-# ─────────────────────────────────────────────
 
 @app.route("/data")
 def get_data():
     """
-    Returns the latest EEG values, detected brain state, and audio status.
-    Response schema:
-      {
-        alpha:   float,
-        beta:    float,
-        theta:   float,
-        state:   str,         // "Focused" | "Relaxed" | "Fatigued"
-        audio:   { track, state, mode, playing, volume }
-      }
+    Latest EEG values + brain state + audio status.
+    Response: { alpha, beta, theta, state, audio, simulating }
     """
     sample = eeg.latest
     if sample is None:
-        return jsonify({"error": "No EEG data available yet."}), 503
+        # Return a pending status instead of a hard 503 so frontend can show
+        # a "connecting…" spinner rather than a crash.
+        return jsonify({
+            "error":      "Waiting for EEG data…",
+            "simulating": eeg.simulating,
+        }), 503
 
     payload = sample.to_dict()
-    payload["audio"] = audio.status
+    payload["audio"]      = audio.status
+    payload["simulating"] = eeg.simulating
     return jsonify(payload)
 
 
 @app.route("/history")
 def get_history():
-    """
-    Returns up to the last 120 EEG snapshots for trend graphs.
-    Each entry: { alpha, beta, theta, state, timestamp }
-    """
+    """Last 120 EEG snapshots for the trend graph."""
     with history_lock:
         data = list(history)
     return jsonify(data)
@@ -104,10 +93,7 @@ def get_history():
 
 @app.route("/mode", methods=["POST"])
 def set_mode():
-    """
-    Body: { "mode": "Study" | "Relax" }
-    Switches the adaptive audio mode.
-    """
+    """Body: { "mode": "Study" | "Relax" }"""
     body = request.get_json(force=True, silent=True) or {}
     mode = body.get("mode", "Study")
     if mode not in ("Study", "Relax"):
@@ -118,9 +104,7 @@ def set_mode():
 
 @app.route("/volume", methods=["POST"])
 def set_volume():
-    """
-    Body: { "volume": 0.0–1.0 }
-    """
+    """Body: { "volume": 0.0–1.0 }"""
     body = request.get_json(force=True, silent=True) or {}
     try:
         vol = float(body.get("volume", 0.75))
@@ -130,17 +114,14 @@ def set_volume():
     return jsonify({"volume": vol, "ok": True})
 
 
-# ─────────────────────────────────────────────
-#  Startup
-# ─────────────────────────────────────────────
+# ─── Startup ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Start EEG listener thread
     eeg.start()
 
-    # Start integration loop thread
-    integration_thread = threading.Thread(target=_integration_loop, daemon=True)
-    integration_thread.start()
+    t = threading.Thread(target=_integration_loop, daemon=True)
+    t.start()
 
-    print("[app] Neurofeedback backend running on http://localhost:5000")
+    print("[app] Neurofeedback backend → http://localhost:5000")
+    print("[app] GET /health to check connection status.")
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
