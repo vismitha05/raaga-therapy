@@ -160,6 +160,7 @@ class AudioEngine:
         Only switch when `incoming_state` has been stable for
         STABILITY_THRESHOLD seconds.  Prevents rapid track-switching
         on transient EEG fluctuations.
+        
         """
         now = time.time()
 
