@@ -18,8 +18,6 @@ frontend/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
-yarn.lock
 .pnpm-debug.log
 
 # React build
@@ -54,6 +52,21 @@ htmlcov/
 # Audio assets (local binaries)
 backend/audio/*.mp3
 backend/audio/*.wav
+frontend/public/audio/*.mp3
+frontend/public/audio/*.wav
+frontend/public/audio/*.flac
 
 # Misc
 *.sqlite3
+*.db
+
+# Local runtime/binaries
+backend/capsule-public-v1.7.0/
+capsule-public-v1.7.0/
+*.exe
+*.dll
+
+# Temp/cache
+.cache/
+tmp/
+*.tmp
