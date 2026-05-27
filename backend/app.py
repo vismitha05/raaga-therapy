@@ -19,7 +19,7 @@ import threading
 import time
 import collections
 
-from eeg_listener import EEGListener
+from eeg_bridge import get_eeg_listener
 from audio_engine import AudioEngine
 
 # ─── App setup ────────────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ CORS(app)
 
 # ─── Global singletons ────────────────────────────────────────────────────────
 
-eeg   = EEGListener()
+eeg   = get_eeg_listener()
 audio = AudioEngine(mode="Study")
 
 HISTORY_MAXLEN = 120
@@ -117,8 +117,6 @@ def set_volume():
 # ─── Startup ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    eeg.start()
-
     t = threading.Thread(target=_integration_loop, daemon=True)
     t.start()
 

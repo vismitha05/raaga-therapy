@@ -19,6 +19,8 @@ from adaptive_backend.domain.enums import BrainState, DayPart
 from adaptive_backend.services.eeg_monitoring_service import (
     EEGMonitoringService, EEGSimulator
 )
+from eeg_bridge import get_eeg_listener
+
 from adaptive_backend.services.raga_therapy_engine import (
     RagaTherapyEngine, EEGStateAnalyzer, FrequencyBand,
     TransitionValidator, EEGDetection, TherapyPlaylist, RagaTrack
@@ -75,6 +77,7 @@ class PlaylistResponse(BaseModel):
     total_duration_minutes: int
     total_steps: int
     day_part: str
+    production_profile: dict
     tracks: list[dict]  # Serialized RagaTracks
 
 
@@ -310,20 +313,7 @@ async def select_duration(request: DurationSelectionRequest):
     session["playlist"] = playlist
     session["duration_minutes"] = request.duration_minutes
 
-    # Serialize tracks
-    track_dicts = [
-        {
-            "order": track.order_in_sequence,
-            "band": track.band.value,
-            "raga": track.raga_name,
-            "duration_seconds": track.duration_seconds,
-            "frequency_range": track.frequency_range_hz,
-            "estimated_start_time_seconds": sum(
-                t.duration_seconds for t in playlist.tracks[:track.order_in_sequence]
-            ),
-        }
-        for track in playlist.tracks
-    ]
+    track_dicts = _serialize_playlist_tracks(playlist)
 
     return PlaylistResponse(
         session_id=request.session_id,
@@ -332,6 +322,7 @@ async def select_duration(request: DurationSelectionRequest):
         total_duration_minutes=playlist.total_duration_minutes,
         total_steps=playlist.total_transition_steps,
         day_part=playlist.day_part.value,
+        production_profile=playlist.production_profile,
         tracks=track_dicts,
     )
 
@@ -349,20 +340,7 @@ async def get_playlist(session_id: str):
 
     playlist: TherapyPlaylist = session["playlist"]
 
-    # Serialize tracks
-    track_dicts = [
-        {
-            "order": track.order_in_sequence,
-            "band": track.band.value,
-            "raga": track.raga_name,
-            "duration_seconds": track.duration_seconds,
-            "frequency_range": track.frequency_range_hz,
-            "estimated_start_time_seconds": sum(
-                t.duration_seconds for t in playlist.tracks[:track.order_in_sequence]
-            ),
-        }
-        for track in playlist.tracks
-    ]
+    track_dicts = _serialize_playlist_tracks(playlist)
 
     return PlaylistResponse(
         session_id=session_id,
@@ -371,6 +349,7 @@ async def get_playlist(session_id: str):
         total_duration_minutes=playlist.total_duration_minutes,
         total_steps=playlist.total_transition_steps,
         day_part=playlist.day_part.value,
+        production_profile=playlist.production_profile,
         tracks=track_dicts,
     )
 
@@ -411,6 +390,26 @@ async def complete_session(session_id: str):
     }
 
 
+def _serialize_playlist_tracks(playlist: TherapyPlaylist) -> list[dict]:
+    return [
+        {
+            "order": track.order_in_sequence,
+            "band": track.band.value,
+            "raga": track.raga_name,
+            "file_slug": track.file_slug,
+            "bpm": track.bpm,
+            "lay": track.lay,
+            "feel": track.feel,
+            "duration_seconds": track.duration_seconds,
+            "frequency_range": track.frequency_range_hz,
+            "estimated_start_time_seconds": sum(
+                t.duration_seconds for t in playlist.tracks[: track.order_in_sequence]
+            ),
+        }
+        for track in playlist.tracks
+    ]
+
+
 # ─── Background Tasks ────────────────────────────────────────────────────────
 
 async def _run_simulated_eeg_scan(session_id: str, duration_seconds: int):
@@ -440,26 +439,25 @@ async def _run_simulated_eeg_scan(session_id: str, duration_seconds: int):
 
 
 async def _run_real_eeg_scan(session_id: str, duration_seconds: int):
-    """Run real EEG hardware scan"""
+    """Run EEG scan using the live Neiry/Capsule listener (port 5001)."""
     if session_id not in active_sessions:
         return
 
-    # TODO: Connect to actual EEG hardware (Neury Capsule, Muse, etc.)
-    # For now, use simulated data
     import time
-    import random
 
-    monitoring_service.start_monitoring()
+    listener = get_eeg_listener()
     monitoring_service.window_seconds = duration_seconds
+    monitoring_service.start_monitoring()
 
-    # Simulate receiving EEG data
-    for i in range(duration_seconds):
-        alpha = random.uniform(0.3, 0.7)
-        beta = random.uniform(0.2, 0.6)
-        theta = random.uniform(0.1, 0.5)
-
-        monitoring_service.add_power_bands(alpha, beta, theta)
+    for _ in range(duration_seconds):
+        sample = listener.latest
+        if sample is not None:
+            monitoring_service.add_power_bands(sample.alpha, sample.beta, sample.theta)
         time.sleep(1.0)
 
     detection = monitoring_service.stop_monitoring()
+    if detection is None and listener.latest is not None:
+        s = listener.latest
+        detection = EEGStateAnalyzer.create_detection(s.alpha, s.beta, s.theta)
+
     active_sessions[session_id]["eeg_detection"] = detection

@@ -15,7 +15,10 @@ class TempoLevel(str, Enum):
 
 
 class DayPart(str, Enum):
-    morning = "morning"
+    """Prahar windows for raga selection."""
+    morning = "morning"  # 6:00 AM – 12:00 PM
+    evening_night = "evening_night"  # 6:00 PM – 6:00 AM
+    # Legacy aliases (mapped to evening_night in therapy engine)
     afternoon = "afternoon"
     evening = "evening"
     night = "night"

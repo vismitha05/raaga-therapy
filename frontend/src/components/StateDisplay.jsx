@@ -21,7 +21,8 @@ import React, { useEffect, useRef } from "react";
 const STATE_CONFIG = {
   Focused:  { color: "#69f0ae", icon: "◈", label: "FOCUSED",  desc: "High concentration detected" },
   Relaxed:  { color: "#4fc3f7", icon: "◉", label: "RELAXED",  desc: "Calm alpha waves dominant" },
-  Fatigued: { color: "#ff6b35", icon: "◎", label: "FATIGUED", desc: "Theta waves elevated" },
+  Fatigued: { color: "#ff6b35", icon: "◎", label: "SLEEPY",   desc: "Theta waves elevated" },
+  Sleep:    { color: "#ff6b35", icon: "◎", label: "SLEEPY",   desc: "Theta waves elevated" },
 };
 
 // ── Band power gauge ──────────────────────────────────────────────────────────

@@ -343,5 +343,11 @@ class EEGListener:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _band_power(freqs, psd, lo: float, hi: float) -> float:
+    """
+    Mean PSD in [lo, hi] Hz. Using the mean (not the sum) avoids classifying
+    everyone as Focused — the beta band (12–30 Hz) is much wider than alpha/theta.
+    """
     idx = np.logical_and(freqs >= lo, freqs <= hi)
-    return float(np.sum(psd[idx]))
+    if not np.any(idx):
+        return 0.0
+    return float(np.mean(psd[idx]))

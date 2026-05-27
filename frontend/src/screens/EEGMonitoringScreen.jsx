@@ -16,7 +16,7 @@ export function EEGMonitoringScreen({ onScanComplete, sessionId, setSessionId })
   const [progress, setProgress] = useState(0);
   const [detection, setDetection] = useState(null);
   const [error, setError] = useState(null);
-  const [useSimulation, setUseSimulation] = useState(true);
+  const [useSimulation, setUseSimulation] = useState(false);
 
   // Start EEG scan
   const startScan = useCallback(async () => {

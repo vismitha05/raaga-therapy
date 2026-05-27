@@ -3,93 +3,156 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 const EEGRealtimeContext = createContext(null);
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
-const WS_URL = process.env.REACT_APP_WS_URL || API_BASE.replace(/^http/, "ws") + "/api/v1/ws/live";
+const API_PREFIX = process.env.REACT_APP_API_PREFIX || "/api/v1";
+const WS_URL =
+  process.env.REACT_APP_WS_URL ||
+  `${API_BASE.replace(/^http/, "ws")}${API_PREFIX}/ws/live`;
+const POLL_URL = `${API_BASE}${API_PREFIX}/eeg/live`;
 
-const STATES = ["Focused", "Relaxed", "Sleep"];
+function mapPayloadState(payload) {
+  const raw = payload.detected_state || payload.detectedState || payload.classifier_state;
+  if (!raw) return null;
+  if (raw === "Fatigued" || raw === "sleepy" || raw === "sleep") return "Sleep";
+  if (raw === "focused") return "Focused";
+  if (raw === "relaxed") return "Relaxed";
+  return raw;
+}
+
+function applySample(setters, payload) {
+  const state = mapPayloadState(payload);
+  if (state && state !== "Connecting") {
+    setters.setDetectedState(state);
+  }
+  if (typeof payload.confidence === "number") {
+    const pct = payload.confidence <= 1 ? Math.round(payload.confidence * 100) : Math.round(payload.confidence);
+    setters.setConfidence(pct);
+  }
+  if (payload.active_raaga || payload.activeRaaga) {
+    setters.setSuggestedRaaga(payload.active_raaga || payload.activeRaaga);
+  }
+  if (typeof payload.transition_stage === "number") {
+    setters.setTransitionStage(payload.transition_stage);
+  }
+  const live = payload.eeg_status === "live";
+  setters.setConnected(live);
+  setters.setMode(live ? "live" : "waiting");
+
+  const alpha = payload.alpha;
+  const beta = payload.beta;
+  const theta = payload.theta;
+  if (typeof alpha === "number" && typeof beta === "number" && typeof theta === "number") {
+    const scale = Math.max(alpha, beta, theta, 1e-9);
+    setters.appendSeries({
+      tick: new Date().toLocaleTimeString(),
+      alpha: Math.round((alpha / scale) * 100),
+      beta: Math.round((beta / scale) * 100),
+      theta: Math.round((theta / scale) * 100),
+    });
+    const peak = Math.max(alpha, beta, theta) / scale;
+    setters.setQuality(Math.round(72 + peak * 26));
+  }
+}
 
 export function EEGRealtimeProvider({ children }) {
   const [connected, setConnected] = useState(false);
-  const [quality, setQuality] = useState(90);
-  const [confidence, setConfidence] = useState(82);
-  const [detectedState, setDetectedState] = useState("Focused");
-  const [suggestedRaaga, setSuggestedRaaga] = useState("Hamsadhwani");
+  const [quality, setQuality] = useState(0);
+  const [confidence, setConfidence] = useState(0);
+  const [detectedState, setDetectedState] = useState("Connecting");
+  const [suggestedRaaga, setSuggestedRaaga] = useState("—");
   const [transitionStage, setTransitionStage] = useState(0);
   const [eegSeries, setEegSeries] = useState([]);
-  const [mode, setMode] = useState("mock");
+  const [mode, setMode] = useState("waiting");
   const wsRef = useRef(null);
+
+  const setters = useMemo(
+    () => ({
+      setConnected,
+      setConfidence,
+      setDetectedState,
+      setSuggestedRaaga,
+      setTransitionStage,
+      setMode,
+      setQuality,
+      appendSeries: (point) => setEegSeries((prev) => [...prev.slice(-23), point]),
+    }),
+    []
+  );
 
   useEffect(() => {
     let alive = true;
+
+    async function poll() {
+      try {
+        const res = await fetch(POLL_URL);
+        if (!res.ok || !alive) return;
+        const payload = await res.json();
+        applySample(setters, payload);
+      } catch (_e) {
+        if (alive) {
+          setConnected(false);
+          setMode("waiting");
+          setDetectedState("Connecting");
+        }
+      }
+    }
+
+    poll();
+    const pollId = setInterval(poll, 1000);
+
     try {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (!alive) return;
-        setConnected(true);
-        setMode("ws");
+        setMode("live");
       };
 
       ws.onmessage = (event) => {
         if (!alive) return;
-        const payload = JSON.parse(event.data);
-        const state = payload.detected_state || payload.detectedState;
-        const raaga = payload.active_raaga || payload.activeRaaga;
-        if (state) setDetectedState(state);
-        if (raaga) setSuggestedRaaga(raaga);
-        if (typeof payload.confidence === "number") setConfidence(Math.round(payload.confidence * 100));
-        if (typeof payload.transition_stage === "number") setTransitionStage(payload.transition_stage);
-        // respect backend-reported EEG status (live vs offline)
-        if (payload.eeg_status && payload.eeg_status !== "live") {
-          setConnected(false);
-        } else {
-          setConnected(true);
+        try {
+          const payload = JSON.parse(event.data);
+          applySample(setters, payload);
+        } catch (_e) {
+          /* ignore malformed frames */
         }
       };
 
       ws.onclose = () => {
         if (!alive) return;
-        setConnected(false);
-        setMode("mock");
+        setMode("waiting");
       };
 
       ws.onerror = () => {
         if (!alive) return;
-        setConnected(false);
-        setMode("mock");
-        try { ws.close(); } catch (_e) {}
+        try {
+          ws.close();
+        } catch (_e) {
+          /* noop */
+        }
       };
     } catch (_e) {
-      setMode("mock");
+      setMode("waiting");
     }
 
     return () => {
       alive = false;
+      clearInterval(pollId);
       if (wsRef.current) wsRef.current.close();
     };
-  }, []);
-
-  useEffect(() => {
-    const start = Date.now();
-    const id = setInterval(() => {
-      const t = (Date.now() - start) / 1000;
-      const alpha = Math.round(48 + Math.sin(t * 0.7) * 18 + Math.random() * 8);
-      const beta = Math.round(44 + Math.cos(t * 1.1) * 16 + Math.random() * 9);
-      const theta = Math.round(38 + Math.sin(t * 0.5 + 0.8) * 14 + Math.random() * 10);
-      setEegSeries((prev) => [...prev.slice(-23), { tick: new Date().toLocaleTimeString(), alpha, beta, theta }]);
-
-      if (mode === "mock") {
-        setQuality((q) => Math.max(72, Math.min(99, q + (Math.random() * 6 - 3))));
-        setConfidence((c) => Math.max(70, Math.min(98, c + (Math.random() * 5 - 2.5))));
-        if (Math.random() > 0.86) setDetectedState(STATES[Math.floor(Math.random() * STATES.length)]);
-      }
-    }, 1200);
-
-    return () => clearInterval(id);
-  }, [mode]);
+  }, [setters]);
 
   const value = useMemo(
-    () => ({ connected, quality: Math.round(quality), confidence: Math.round(confidence), detectedState, suggestedRaaga, transitionStage, eegSeries, mode }),
+    () => ({
+      connected,
+      quality: Math.round(quality),
+      confidence: Math.round(confidence),
+      detectedState,
+      suggestedRaaga,
+      transitionStage,
+      eegSeries,
+      mode,
+    }),
     [connected, quality, confidence, detectedState, suggestedRaaga, transitionStage, eegSeries, mode]
   );
 

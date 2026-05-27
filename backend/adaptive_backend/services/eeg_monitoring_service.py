@@ -115,6 +115,8 @@ class EEGMonitoringService:
     def get_monitoring_progress(self) -> float:
         """Get monitoring progress as percentage (0.0 - 1.0)"""
         with self._lock:
+            if len(self._power_bands) > 0:
+                return min(1.0, len(self._power_bands) / max(1, self.window_seconds))
             if self.window_samples == 0:
                 return 0.0
             return min(1.0, len(self._eeg_buffer) / self.window_samples)
