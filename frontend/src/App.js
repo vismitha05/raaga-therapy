@@ -20,9 +20,10 @@ import RagaPlayerStatus  from "./components/RagaPlayerStatus";
 import StateHistoryChart from "./components/StateHistoryChart";
 
 import "./App.css";
+import { API_BASE } from "./config/runtimeConfig";
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const API_BASE      = process.env.REACT_APP_API_URL || "http://localhost:5000";
+// API_BASE is provided by runtimeConfig to support both localhost and deployed envs.
 const POLL_LIVE_MS  = 750;    // live data polling interval
 const POLL_HIST_MS  = 3000;   // history polling interval
 

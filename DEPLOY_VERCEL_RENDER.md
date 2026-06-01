@@ -1,5 +1,14 @@
 # Deploy Raaga Therapy (Vercel + Render)
 
+## Local development (localhost)
+- Backend base URL: `http://127.0.0.1:8000`
+- Frontend dev URL: `http://localhost:3000`
+- Frontend env:
+  - `REACT_APP_API_URL` = `http://127.0.0.1:8000`
+  - `REACT_APP_WS_URL` = `ws://127.0.0.1:8000/api/v1/ws/live`
+- Backend env:
+  - `CORS_ALLOW_ORIGINS` = `http://localhost:3000`
+
 ## Architecture
 - `frontend` (React): deploy to Vercel
 - `backend/adaptive_backend` (FastAPI + WebSocket): deploy to Render
@@ -15,7 +24,7 @@
    - Build Command: `pip install -r requirements_adaptive.txt`
    - Start Command: `uvicorn adaptive_backend.main:app --host 0.0.0.0 --port $PORT`
 5. Add environment variable:
-   - `CORS_ALLOW_ORIGINS` = `https://<your-vercel-domain>`
+   - `CORS_ALLOW_ORIGINS` = `https://<your-vercel-domain>` (example: `https://raaga-therapy.vercel.app`)
    - Optional for multiple domains: comma-separated list
 6. Click `Create Web Service`.
 7. After deploy, verify:
@@ -28,8 +37,9 @@
 3. Set `Root Directory` to `frontend`.
 4. Framework preset: `Create React App` (auto-detected).
 5. Add environment variables:
-   - `REACT_APP_API_URL` = `https://<render-domain>`
-   - `REACT_APP_WS_URL` = `wss://<render-domain>/api/v1/ws/live`
+   - `REACT_APP_API_URL` = `https://<render-domain>` (example: `https://raaga-therapy.onrender.com`)
+   - `REACT_APP_WS_URL` = `wss://<render-domain>/api/v1/ws/live` (example: `wss://raaga-therapy.onrender.com/api/v1/ws/live`)
+   - Optional: `REACT_APP_API_PREFIX` = `/api/v1`
 6. Click `Deploy`.
 
 ## 3. Redeploy after env var changes

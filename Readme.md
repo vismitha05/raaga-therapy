@@ -13,6 +13,16 @@ Hindustani raga therapy guided by EEG brain-state frequency bands.
 - Frontend: `npm start` (from `frontend/`)
 - EEG hardware (optional): Capsule example under `capsule-public-v1.7.0/Example/Win/build/Release`
 
+### Frontend environment variables (Vercel / local)
+
+- `REACT_APP_API_URL` (example prod): `https://raaga-therapy.onrender.com`
+- `REACT_APP_WS_URL` (example prod): `wss://raaga-therapy.onrender.com/api/v1/ws/live`
+- Optional: `REACT_APP_API_PREFIX` (default): `/api/v1`
+
+### Backend CORS (Render / local)
+
+- `CORS_ALLOW_ORIGINS` must include your frontend origin (example prod): `https://raaga-therapy.vercel.app`
+
 ## Raga selection flow
 
 ### Style & production (all sessions)

@@ -1,12 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { WS_URL } from "../config/runtimeConfig";
 
 const EEGRealtimeContext = createContext(null);
-
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
-const API_PREFIX = process.env.REACT_APP_API_PREFIX || "/api/v1";
-const WS_URL =
-  process.env.REACT_APP_WS_URL ||
-  `${API_BASE.replace(/^http/, "ws")}${API_PREFIX}/ws/live`;
 
 function qualityToPercent(channelQuality = {}) {
   const weights = { GOOD: 100, WARNING: 60, BAD: 20 };

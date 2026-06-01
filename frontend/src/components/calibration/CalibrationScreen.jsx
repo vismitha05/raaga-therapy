@@ -4,10 +4,8 @@ import { createLiveSocket } from "../../services/websocketService";
 import { CalibrationProgress } from "./CalibrationProgress";
 import { ChannelStatus } from "./ChannelStatus";
 import { DeviceConnectionStatus } from "./DeviceConnectionStatus";
+import { API_BASE, API_PREFIX, WS_URL } from "../../config/runtimeConfig";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
-const API_PREFIX = process.env.REACT_APP_API_PREFIX || "/api/v1";
-const WS_URL = process.env.REACT_APP_WS_URL || `${API_BASE.replace(/^http/, "ws")}${API_PREFIX}/ws/live`;
 const CALIBRATION_STATUS_URL = `${API_BASE}${API_PREFIX}/calibration/status`;
 
 const DEFAULT_CALIBRATION = {

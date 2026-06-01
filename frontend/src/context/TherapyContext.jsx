@@ -1,11 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioPlayer } from "./AudioPlayerContext";
 import { useEEGRealtime } from "./EEGRealtimeContext";
+import { API_BASE, API_PREFIX } from "../config/runtimeConfig";
 
 const TherapyContext = createContext(undefined);
-
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
-const API_PREFIX = process.env.REACT_APP_API_PREFIX || "/api/v1";
 
 const STATE_META = {
   T1: { icon: "T1", title: "Deep Meditation", desc: "Sleep-border calm and grounding." },
