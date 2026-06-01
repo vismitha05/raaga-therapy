@@ -7,35 +7,50 @@ const API_PREFIX = process.env.REACT_APP_API_PREFIX || "/api/v1";
 const WS_URL =
   process.env.REACT_APP_WS_URL ||
   `${API_BASE.replace(/^http/, "ws")}${API_PREFIX}/ws/live`;
-const POLL_URL = `${API_BASE}${API_PREFIX}/eeg/live`;
 
-function mapPayloadState(payload) {
-  const raw = payload.detected_state || payload.detectedState || payload.classifier_state;
-  if (!raw) return null;
-  if (raw === "Fatigued" || raw === "sleepy" || raw === "sleep") return "Sleep";
-  if (raw === "focused") return "Focused";
-  if (raw === "relaxed") return "Relaxed";
-  return raw;
+function qualityToPercent(channelQuality = {}) {
+  const weights = { GOOD: 100, WARNING: 60, BAD: 20 };
+  const values = Object.values(channelQuality);
+  if (!values.length) return 0;
+  const total = values.reduce((sum, quality) => sum + (weights[quality] ?? 0), 0);
+  return Math.round(total / values.length);
+}
+
+function normalizeConfidence(value) {
+  if (typeof value !== "number") return 0;
+  return value <= 1 ? Math.round(value * 100) : Math.round(value);
 }
 
 function applySample(setters, payload) {
-  const state = mapPayloadState(payload);
-  if (state && state !== "Connecting") {
-    setters.setDetectedState(state);
-  }
-  if (typeof payload.confidence === "number") {
-    const pct = payload.confidence <= 1 ? Math.round(payload.confidence * 100) : Math.round(payload.confidence);
-    setters.setConfidence(pct);
-  }
-  if (payload.active_raaga || payload.activeRaaga) {
-    setters.setSuggestedRaaga(payload.active_raaga || payload.activeRaaga);
-  }
-  if (typeof payload.transition_stage === "number") {
-    setters.setTransitionStage(payload.transition_stage);
-  }
-  const live = payload.eeg_status === "live";
-  setters.setConnected(live);
-  setters.setMode(live ? "live" : "waiting");
+  setters.setConnected(payload.eeg_status === "live");
+  setters.setConfidence(normalizeConfidence(payload.confidence));
+  setters.setDetectedState(payload.current_eeg_state || payload.instant_cognitive_state || payload.detected_state || "Connecting");
+  setters.setDetectedStateLabel(
+    payload.current_eeg_state_label ||
+      payload.instant_cognitive_state_label ||
+      payload.detected_state ||
+      "Connecting"
+  );
+  setters.setSuggestedRaaga(payload.current_raaga || payload.active_raaga || "—");
+  setters.setUpcomingRaaga(payload.upcoming_raaga || "—");
+  setters.setTargetState(payload.target_eeg_state || null);
+  setters.setTargetStateLabel(payload.target_eeg_state_label || "");
+  setters.setTransitionStage(payload.playlist_version || payload.transition_stage || 0);
+  setters.setSessionProgress(Math.round(payload.session_progress_percent || 0));
+  setters.setCurrentTrack(payload.current_track || null);
+  setters.setUpcomingTrack(payload.upcoming_track || null);
+  setters.setPlaylist(payload.playlist || []);
+  setters.setPlaylistVersion(payload.playlist_version || 0);
+  setters.setHeadsetReady(Boolean(payload.headset_ready));
+  setters.setHeadsetMessage(payload.headset_message || "");
+  setters.setChannelQuality(payload.channel_quality || {});
+  setters.setResistance(payload.resistance || {});
+  setters.setPendingState(payload.pending_eeg_state || null);
+  setters.setPendingSeconds(payload.pending_state_stable_for_seconds || 0);
+  setters.setTherapyActive(Boolean(payload.therapy_active));
+  setters.setCrossfadeSeconds(payload.crossfade_seconds || 0);
+  setters.setMode(payload.eeg_status === "live" ? "live" : "waiting");
+  setters.setQuality(qualityToPercent(payload.channel_quality || {}));
 
   const alpha = payload.alpha;
   const beta = payload.beta;
@@ -48,8 +63,6 @@ function applySample(setters, payload) {
       beta: Math.round((beta / scale) * 100),
       theta: Math.round((theta / scale) * 100),
     });
-    const peak = Math.max(alpha, beta, theta) / scale;
-    setters.setQuality(Math.round(72 + peak * 26));
   }
 }
 
@@ -58,10 +71,27 @@ export function EEGRealtimeProvider({ children }) {
   const [quality, setQuality] = useState(0);
   const [confidence, setConfidence] = useState(0);
   const [detectedState, setDetectedState] = useState("Connecting");
+  const [detectedStateLabel, setDetectedStateLabel] = useState("Connecting");
   const [suggestedRaaga, setSuggestedRaaga] = useState("—");
+  const [upcomingRaaga, setUpcomingRaaga] = useState("—");
+  const [targetState, setTargetState] = useState(null);
+  const [targetStateLabel, setTargetStateLabel] = useState("");
   const [transitionStage, setTransitionStage] = useState(0);
+  const [sessionProgress, setSessionProgress] = useState(0);
   const [eegSeries, setEegSeries] = useState([]);
   const [mode, setMode] = useState("waiting");
+  const [headsetReady, setHeadsetReady] = useState(false);
+  const [headsetMessage, setHeadsetMessage] = useState("");
+  const [channelQuality, setChannelQuality] = useState({});
+  const [resistance, setResistance] = useState({});
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [upcomingTrack, setUpcomingTrack] = useState(null);
+  const [playlist, setPlaylist] = useState([]);
+  const [playlistVersion, setPlaylistVersion] = useState(0);
+  const [pendingState, setPendingState] = useState(null);
+  const [pendingSeconds, setPendingSeconds] = useState(0);
+  const [therapyActive, setTherapyActive] = useState(false);
+  const [crossfadeSeconds, setCrossfadeSeconds] = useState(0);
   const wsRef = useRef(null);
 
   const setters = useMemo(
@@ -69,10 +99,27 @@ export function EEGRealtimeProvider({ children }) {
       setConnected,
       setConfidence,
       setDetectedState,
+      setDetectedStateLabel,
       setSuggestedRaaga,
+      setUpcomingRaaga,
+      setTargetState,
+      setTargetStateLabel,
       setTransitionStage,
+      setSessionProgress,
       setMode,
       setQuality,
+      setHeadsetReady,
+      setHeadsetMessage,
+      setChannelQuality,
+      setResistance,
+      setCurrentTrack,
+      setUpcomingTrack,
+      setPlaylist,
+      setPlaylistVersion,
+      setPendingState,
+      setPendingSeconds,
+      setTherapyActive,
+      setCrossfadeSeconds,
       appendSeries: (point) => setEegSeries((prev) => [...prev.slice(-23), point]),
     }),
     []
@@ -80,24 +127,6 @@ export function EEGRealtimeProvider({ children }) {
 
   useEffect(() => {
     let alive = true;
-
-    async function poll() {
-      try {
-        const res = await fetch(POLL_URL);
-        if (!res.ok || !alive) return;
-        const payload = await res.json();
-        applySample(setters, payload);
-      } catch (_e) {
-        if (alive) {
-          setConnected(false);
-          setMode("waiting");
-          setDetectedState("Connecting");
-        }
-      }
-    }
-
-    poll();
-    const pollId = setInterval(poll, 1000);
 
     try {
       const ws = new WebSocket(WS_URL);
@@ -111,33 +140,30 @@ export function EEGRealtimeProvider({ children }) {
       ws.onmessage = (event) => {
         if (!alive) return;
         try {
-          const payload = JSON.parse(event.data);
-          applySample(setters, payload);
-        } catch (_e) {
-          /* ignore malformed frames */
+          applySample(setters, JSON.parse(event.data));
+        } catch (_error) {
+          // Ignore malformed frames.
         }
       };
 
       ws.onclose = () => {
-        if (!alive) return;
-        setMode("waiting");
+        if (alive) setMode("waiting");
       };
 
       ws.onerror = () => {
         if (!alive) return;
         try {
           ws.close();
-        } catch (_e) {
-          /* noop */
+        } catch (_error) {
+          // noop
         }
       };
-    } catch (_e) {
+    } catch (_error) {
       setMode("waiting");
     }
 
     return () => {
       alive = false;
-      clearInterval(pollId);
       if (wsRef.current) wsRef.current.close();
     };
   }, [setters]);
@@ -145,15 +171,58 @@ export function EEGRealtimeProvider({ children }) {
   const value = useMemo(
     () => ({
       connected,
-      quality: Math.round(quality),
-      confidence: Math.round(confidence),
+      quality,
+      confidence,
       detectedState,
+      detectedStateLabel,
       suggestedRaaga,
+      upcomingRaaga,
+      targetState,
+      targetStateLabel,
       transitionStage,
+      sessionProgress,
       eegSeries,
       mode,
+      headsetReady,
+      headsetMessage,
+      channelQuality,
+      resistance,
+      currentTrack,
+      upcomingTrack,
+      playlist,
+      playlistVersion,
+      pendingState,
+      pendingSeconds,
+      therapyActive,
+      crossfadeSeconds,
     }),
-    [connected, quality, confidence, detectedState, suggestedRaaga, transitionStage, eegSeries, mode]
+    [
+      connected,
+      quality,
+      confidence,
+      detectedState,
+      detectedStateLabel,
+      suggestedRaaga,
+      upcomingRaaga,
+      targetState,
+      targetStateLabel,
+      transitionStage,
+      sessionProgress,
+      eegSeries,
+      mode,
+      headsetReady,
+      headsetMessage,
+      channelQuality,
+      resistance,
+      currentTrack,
+      upcomingTrack,
+      playlist,
+      playlistVersion,
+      pendingState,
+      pendingSeconds,
+      therapyActive,
+      crossfadeSeconds,
+    ]
   );
 
   return <EEGRealtimeContext.Provider value={value}>{children}</EEGRealtimeContext.Provider>;

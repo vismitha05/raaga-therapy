@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     websocket_channel_size: int = 300
     cors_allow_origins: str = "*"
 
+    # Capsule BLE discovery — aligned with monitor_headset.py
+    capsule_scan_seconds: int = 8
+    capsule_discover_timeout_seconds: int = 10
+    capsule_discover_retry_delay_seconds: float = 2.0
+    capsule_discover_max_attempts: int = 30
+    capsule_preferred_serial: str | None = "821108"
+    capsule_logs_dir: str = "Logs"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

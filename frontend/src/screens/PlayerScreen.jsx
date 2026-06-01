@@ -1,5 +1,7 @@
 import React from "react";
 import { useTherapy } from "../context/TherapyContext";
+import { RaagaPlayer } from "../components/therapy/RaagaPlayer";
+import { TherapyStatus } from "../components/therapy/TherapyStatus";
 import { EEGLineChart } from "../components/charts/AnalyticsCharts";
 import { CTAButton, GlassCard, ProgressBar } from "../components/ui/Primitives";
 
@@ -14,6 +16,7 @@ export function PlayerScreen() {
     setScreen,
     audio,
     endSession,
+    error,
   } = useTherapy();
 
   const mins = String(Math.floor(timerSec / 60)).padStart(2, "0");
@@ -27,12 +30,27 @@ export function PlayerScreen() {
         <div className="player-top">
           <div>
             <h2>{stream.currentRaaga}</h2>
-            <p>AI selected Raaga: {stream.currentRaaga} for enhanced {targetState.toLowerCase()}</p>
+            <p>Ordered transition path is being followed without skipping intermediate EEG states.</p>
             <p className="muted">Current state: {stream.detectedState} | Target state: {targetState}</p>
-            <p className="muted">Status: {stream.playbackStatus} | Transition: {stream.transitionState}</p>
+            <p className="muted">Status: {stream.playbackStatus} | Playlist version: {stream.transitionState}</p>
           </div>
           <div className={`breath-orb ${audio.isPlaying ? "play" : ""}`} />
         </div>
+
+        <TherapyStatus
+          currentState={stream.detectedState}
+          currentStateLabel={stream.detectedStateLabel}
+          targetState={stream.targetState}
+          targetStateLabel={stream.targetStateLabel}
+          currentRaaga={stream.currentRaaga}
+          upcomingRaaga={stream.upcomingRaaga}
+          sessionProgress={sessionProgress}
+          headsetReady={stream.headsetReady}
+          headsetMessage={stream.headsetMessage}
+          channelQuality={stream.channelQuality}
+          pendingState={stream.pendingState}
+          pendingSeconds={stream.pendingSeconds}
+        />
 
         <div className="music-controls">
           <button className="play-btn" onClick={audio.togglePlayPause}>{audio.isPlaying ? "Pause" : "Play"}</button>
@@ -55,7 +73,17 @@ export function PlayerScreen() {
           <input type="range" min="0" max="1" step="0.01" value={audio.volume} onChange={(e) => audio.setVolume(Number(e.target.value))} />
           <span className="timer-pill">{Math.round(audio.volume * 100)}%</span>
         </div>
-        {stream.error ? <div className="error-state">{stream.error}</div> : null}
+        {error || stream.error ? <div className="error-state">{error || stream.error}</div> : null}
+
+        <RaagaPlayer
+          currentTrack={stream.currentTrack}
+          upcomingTrack={stream.upcomingTrack}
+          isPlaying={audio.isPlaying}
+          playbackStatus={stream.playbackStatus}
+          currentTime={stream.currentTime}
+          trackDuration={stream.trackDuration}
+          crossfadeSeconds={stream.crossfadeSeconds}
+        />
 
         <EEGLineChart data={stream.eegSeries} />
       </GlassCard>
@@ -66,7 +94,7 @@ export function PlayerScreen() {
         <ProgressBar label="Cognitive Stability" value={liveMetrics.stability} color="purple" />
         <ProgressBar label="Stress Reduction" value={liveMetrics.stressReduction} color="green" />
         <ProgressBar label="Sleep Readiness" value={liveMetrics.sleepReadiness} color="blue" />
-        <CTAButton kind="ghost" onClick={() => { endSession(); setScreen("completion"); }}>End Session</CTAButton>
+        <CTAButton kind="ghost" onClick={endSession}>End Session</CTAButton>
       </GlassCard>
     </div>
   );

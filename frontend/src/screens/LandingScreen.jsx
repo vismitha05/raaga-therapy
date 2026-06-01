@@ -44,11 +44,15 @@ export function LandingScreen() {
         {!stream.connected ? (
           <div className="error-state">Device disconnected. Reposition headband to resume neural sync.</div>
         ) : null}
+        {!stream.headsetReady ? (
+          <div className="error-state">{stream.headsetMessage || "Adjust Headband Position"}</div>
+        ) : null}
 
         <div className="hero-grid">
           <div className="state-card">
             <p className="muted">Detected Mental State</p>
             <h2>{analysisPhase === "complete" ? finalState : stream.detectedState}</h2>
+            <p>{stream.detectedStateLabel}</p>
             <p>Confidence {analysisPhase === "complete" ? finalConfidence : stream.confidence}%</p>
             <div className="signal-row">
               <span>Signal Quality</span>
@@ -76,13 +80,21 @@ export function LandingScreen() {
         </div>
 
         {analysisPhase !== "complete" ? (
-          <CTAButton onClick={startAnalysis} disabled={!stream.connected || analysisPhase === "analyzing"}>
+        <CTAButton onClick={startAnalysis} disabled={!stream.connected || analysisPhase === "analyzing"}>
             {analysisPhase === "analyzing" ? `Analyzing... ${countdownSec}s` : "Start Analysis"}
           </CTAButton>
         ) : null}
-        <CTAButton onClick={() => setScreen("state")} disabled={!stream.connected || analysisPhase !== "complete"}>
+        <div className="actions-row">
+          <CTAButton kind="ghost" onClick={() => setScreen("headset")}>
+            Headset Setup
+          </CTAButton>
+          <CTAButton
+            onClick={() => setScreen("state")}
+            disabled={!stream.connected || !stream.headsetReady || analysisPhase !== "complete"}
+          >
           Continue Therapy
-        </CTAButton>
+          </CTAButton>
+        </div>
       </GlassCard>
     </div>
   );

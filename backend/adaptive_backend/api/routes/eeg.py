@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from adaptive_backend.api.dependencies import monitoring_service
+from adaptive_backend.api.dependencies import device_manager, monitoring_service, runtime_metrics_store
 
 router = APIRouter(prefix="/eeg", tags=["eeg"])
 
@@ -24,4 +24,8 @@ async def eeg_health():
     return {
         "has_data": listener.latest is not None,
         "simulating": listener.simulating,
+        "capsule": {
+            "connection": device_manager.state(),
+            "metrics": runtime_metrics_store.snapshot(),
+        },
     }

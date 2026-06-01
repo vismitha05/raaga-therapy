@@ -9,7 +9,7 @@ const DURATION_OPTIONS = [
 ];
 
 export function DurationScreen() {
-  const { duration, setDuration, setScreen, startSession, audio, targetState } = useTherapy();
+  const { duration, setDuration, setScreen, startSession, targetState, error, stream } = useTherapy();
 
   return (
     <div className="layout one">
@@ -23,13 +23,15 @@ export function DurationScreen() {
             </button>
           ))}
         </div>
+        {error ? <div className="error-state">{error}</div> : null}
+        {!stream.headsetReady ? (
+          <div className="error-state">Adjust Headband Position Until All Channels Are Green</div>
+        ) : null}
         <div className="actions-row">
           <CTAButton kind="ghost" onClick={() => setScreen("state")}>Back</CTAButton>
-          <CTAButton onClick={async () => {
-            const queue = audio.setQueueForState(targetState);
-            startSession();
-            setScreen("player");
-            if (queue[0]) await audio.playTrack(queue[0]);
+          <CTAButton disabled={!stream.headsetReady} onClick={async () => {
+            const ok = await startSession();
+            if (!ok) return;
           }}>Start Therapy</CTAButton>
         </div>
       </GlassCard>

@@ -1,463 +1,159 @@
-"""
-therapy_routes.py
----------------
-API endpoints for the complete Raga Therapy workflow:
-1. EEG monitoring (15-second scan)
-2. State selection (user chooses target state)
-3. Duration selection (user chooses session length)
-4. Playlist generation and playback
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, BackgroundTasks
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
-from adaptive_backend.domain.enums import BrainState, DayPart
-from adaptive_backend.services.eeg_monitoring_service import (
-    EEGMonitoringService, EEGSimulator
+from adaptive_backend.api.dependencies import raaga_transition_engine, runtime_metrics_store
+from adaptive_backend.services.session_manager import runtime_store
+from adaptive_backend.therapy.raaga_transition_engine import (
+    COGNITIVE_STATES,
+    STATE_DESCRIPTIONS,
+    STATE_ORDER,
 )
-from eeg_bridge import get_eeg_listener
-
-from adaptive_backend.services.raga_therapy_engine import (
-    RagaTherapyEngine, EEGStateAnalyzer, FrequencyBand,
-    TransitionValidator, EEGDetection, TherapyPlaylist, RagaTrack
-)
-
-# ─── Setup ────────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/therapy", tags=["therapy"])
 
-# Global monitoring service (one per session ideally, but simplified here)
-monitoring_service = EEGMonitoringService(window_seconds=15)
-
-# Session storage (in production, use a database)
-active_sessions: dict[str, dict] = {}
+active_sessions: Dict[str, Dict[str, Any]] = {}
 
 
-# ─── Request/Response Models ──────────────────────────────────────────────────
-
-class EEGScanRequest(BaseModel):
-    """Request to start EEG monitoring"""
-    duration_seconds: int = 15
-    simulate: bool = False  # Use simulated EEG for testing
+class TherapySessionStartRequest(BaseModel):
+    target_state: str = Field(..., description="One of T1, T2, A1, A2, B1, B2")
+    duration_minutes: int = Field(..., ge=1, le=180)
 
 
-class EEGScanResponse(BaseModel):
-    """Response after EEG scan completes"""
-    session_id: str
-    detected_band: str  # FrequencyBand enum
-    detected_state: str  # BrainState enum
-    confidence: float
-    alpha_power: float
-    beta_power: float
-    theta_power: float
-    monitoring_duration_seconds: int
-
-
-class StateSelectionRequest(BaseModel):
-    """User selects target therapeutic state"""
-    session_id: str
-    target_state: str  # "sleep", "relaxed", "focused"
-
-
-class DurationSelectionRequest(BaseModel):
-    """User selects session duration"""
-    session_id: str
-    duration_minutes: int  # 10, 20, or 30
-
-
-class PlaylistResponse(BaseModel):
-    """Generated therapy playlist"""
-    session_id: str
-    start_band: str
-    target_state: str
-    total_duration_minutes: int
-    total_steps: int
-    day_part: str
-    production_profile: dict
-    tracks: list[dict]  # Serialized RagaTracks
-
-
-class MonitoringProgressResponse(BaseModel):
-    """Current EEG monitoring progress"""
-    progress_percent: float
-    time_remaining_seconds: float
-    is_monitoring: bool
-
-
-class TrackProgressUpdate(BaseModel):
-    """Update on current playing track"""
+class TherapyPlaybackUpdate(BaseModel):
     session_id: str
     track_index: int
-    raga_name: str
-    frequency_range: tuple[float, float]
-    duration_seconds: float
     elapsed_seconds: float
     is_playing: bool
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+def _current_or_default_state() -> str:
+    state = raaga_transition_engine.stability.accepted_state
+    return state if state in STATE_ORDER else "A1"
 
-@router.post("/eeg-scan/start", response_model=dict)
-async def start_eeg_scan(request: EEGScanRequest, background_tasks: BackgroundTasks):
-    """
-    Start 15-second EEG monitoring scan.
 
-    Process:
-    1. Initialize session
-    2. Start background monitoring thread
-    3. Return session_id to client
-    4. Client polls /eeg-scan/progress until complete
-
-    Returns:
-        session_id: Unique identifier for this therapy session
-    """
-    session_id = str(uuid.uuid4())
-
-    # Create session state
-    active_sessions[session_id] = {
-        "created_at": datetime.utcnow(),
-        "eeg_detection": None,
-        "target_state": None,
-        "duration_minutes": None,
-        "playlist": None,
-        "playback_progress": {},
-    }
-
-    # Start monitoring in background
-    monitoring_service.window_seconds = request.duration_seconds
-
-    if request.simulate:
-        # Use simulated EEG for testing
-        background_tasks.add_task(
-            _run_simulated_eeg_scan, session_id, request.duration_seconds
-        )
-    else:
-        # Use real EEG hardware
-        background_tasks.add_task(
-            _run_real_eeg_scan, session_id, request.duration_seconds
-        )
-
+def _serialize_session(session_id: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    session = active_sessions[session_id]
+    therapy_snapshot = raaga_transition_engine.therapy_snapshot(
+        headset_ready=runtime_metrics_store.snapshot().get("headset_ready", False),
+        now=now,
+    )
     return {
         "session_id": session_id,
-        "message": "EEG scan started, monitoring for 15 seconds",
-        "total_duration_seconds": request.duration_seconds,
+        "created_at": session["created_at"].isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+        "source_state": session["source_state"],
+        "source_state_label": STATE_DESCRIPTIONS[session["source_state"]],
+        "target_state": session["target_state"],
+        "target_state_label": STATE_DESCRIPTIONS[session["target_state"]],
+        "duration_minutes": session["duration_minutes"],
+        "playlist": therapy_snapshot.get("playlist", []),
+        "playlist_version": therapy_snapshot.get("playlist_version", 0),
+        "time_period": therapy_snapshot.get("time_period"),
+        "current_track": therapy_snapshot.get("current_track"),
+        "upcoming_track": therapy_snapshot.get("upcoming_track"),
+        "current_raaga": therapy_snapshot.get("current_raaga"),
+        "upcoming_raaga": therapy_snapshot.get("upcoming_raaga"),
+        "session_progress_percent": therapy_snapshot.get("session_progress_percent", 0),
+        "transition_path": therapy_snapshot.get("transition_path", []),
+        "crossfade_seconds": therapy_snapshot.get("crossfade_seconds", 0),
+        "headset_ready": therapy_snapshot.get("headset_ready", False),
+        "headset_message": therapy_snapshot.get("headset_message", ""),
     }
 
 
-@router.get("/eeg-scan/progress/{session_id}", response_model=MonitoringProgressResponse)
-async def get_scan_progress(session_id: str):
-    """
-    Poll current EEG scan progress.
-
-    Frontend calls this repeatedly (every 1-2 seconds) until progress reaches 100%.
-
-    Returns:
-        progress_percent: 0.0 - 100.0
-        time_remaining_seconds: Seconds left in scan
-        is_monitoring: Whether still active
-    """
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    progress = monitoring_service.get_monitoring_progress()
-    time_remaining = monitoring_service.get_monitoring_time_remaining()
-
-    return MonitoringProgressResponse(
-        progress_percent=progress * 100,
-        time_remaining_seconds=time_remaining,
-        is_monitoring=monitoring_service._monitoring,
-    )
+@router.get("/states")
+async def therapy_states() -> Dict[str, List[Dict[str, str]]]:
+    return {"states": [COGNITIVE_STATES[code].to_dict() for code in STATE_ORDER]}
 
 
-@router.get("/eeg-scan/result/{session_id}", response_model=EEGScanResponse)
-async def get_scan_result(session_id: str):
-    """
-    Get final EEG scan results after monitoring completes.
+@router.post("/session/start")
+async def start_therapy_session(request: TherapySessionStartRequest) -> Dict[str, Any]:
+    target_state = request.target_state.upper()
+    if target_state not in STATE_ORDER:
+        raise HTTPException(status_code=400, detail=f"Invalid target state: {request.target_state}")
 
-    Called after frontend detects progress == 100%.
+    metrics_snapshot = runtime_metrics_store.snapshot()
+    headset_ready = metrics_snapshot.get("headset_ready", False)
+    current_state = _current_or_default_state()
+    session_id = str(uuid.uuid4())
 
-    Returns:
-        detected_band: T1, T2, A1, A2, B1, or B2
-        detected_state: "sleep", "relaxed", or "focused"
-        confidence: 0.0 - 1.0 confidence score
-    """
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[session_id]
-
-    if session["eeg_detection"] is None:
-        # Still monitoring or no detection yet
-        return HTTPException(status_code=202, detail="Still monitoring...")
-
-    detection: EEGDetection = session["eeg_detection"]
-
-    return EEGScanResponse(
-        session_id=session_id,
-        detected_band=detection.detected_band.value,
-        detected_state=detection.detected_state.value,
-        confidence=detection.confidence,
-        alpha_power=detection.alpha_power,
-        beta_power=detection.beta_power,
-        theta_power=detection.theta_power,
-        monitoring_duration_seconds=15,
-    )
-
-
-@router.post("/state-selection", response_model=dict)
-async def select_target_state(request: StateSelectionRequest):
-    """
-    User selects desired therapeutic state (sleep, relaxed, focused).
-
-    Args:
-        session_id: From EEG scan
-        target_state: "sleep", "relaxed", or "focused"
-
-    Returns:
-        Confirmation and estimated durations for each option
-    """
-    if request.session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[request.session_id]
-
-    # Validate state selection
     try:
-        target_state = BrainState(request.target_state)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid target state: {request.target_state}"
+        plan = raaga_transition_engine.start_session(
+            current_state=current_state,
+            target_state=target_state,
+            duration_minutes=request.duration_minutes,
+            headset_ready=headset_ready,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Store selection
-    session["target_state"] = target_state
-
-    # Get EEG detection
-    detection = session["eeg_detection"]
-    if not detection:
-        raise HTTPException(status_code=400, detail="No EEG detection available")
-
-    # Estimate effectiveness for each duration
-    estimates = RagaTherapyEngine.estimate_session_duration(
-        detection.detected_band, target_state
-    )
-
-    return {
-        "session_id": request.session_id,
-        "target_state": target_state.value,
-        "current_state": detection.detected_state.value,
-        "current_band": detection.detected_band.value,
-        "effectiveness_estimates": estimates,
-        "message": "Target state selected. Choose session duration.",
+    active_sessions[session_id] = {
+        "created_at": datetime.utcnow(),
+        "source_state": current_state,
+        "target_state": target_state,
+        "duration_minutes": request.duration_minutes,
+        "playback_updates": [],
     }
 
-
-@router.post("/duration-selection", response_model=PlaylistResponse)
-async def select_duration(request: DurationSelectionRequest):
-    """
-    User selects session duration (10, 20, or 30 minutes).
-    Generates complete therapy playlist.
-
-    Args:
-        session_id: From previous steps
-        duration_minutes: 10, 20, or 30
-
-    Returns:
-        Complete playlist with raga sequence and timings
-    """
-    if request.session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[request.session_id]
-
-    # Validate inputs
-    if request.duration_minutes not in [10, 20, 30]:
-        raise HTTPException(
-            status_code=400,
-            detail="Duration must be 10, 20, or 30 minutes"
-        )
-
-    detection: EEGDetection = session["eeg_detection"]
-    target_state: BrainState = session["target_state"]
-
-    if not detection or not target_state:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing EEG detection or target state"
-        )
-
-    # Validate transition safety
-    is_valid, reason = TransitionValidator.validate_transition(
-        detection.detected_band,
-        target_state,
-        request.duration_minutes,
+    runtime_store.update(
+        therapy_session_id=session_id,
+        therapy_active=True,
+        current_cognitive_state=current_state,
+        target_cognitive_state=target_state,
+        session_duration_minutes=request.duration_minutes,
+        playlist_version=plan.playlist_version,
+        therapy_playlist=[entry.to_dict() for entry in plan.playlist],
+        active_raaga=plan.playlist[0].raaga if plan.playlist else "",
     )
-
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=reason)
-
-    # Generate playlist
-    playlist = RagaTherapyEngine.generate_therapy_playlist(
-        session_id=request.session_id,
-        detected_band=detection.detected_band,
-        target_state=target_state,
-        duration_minutes=request.duration_minutes,
-    )
-
-    # Store in session
-    session["playlist"] = playlist
-    session["duration_minutes"] = request.duration_minutes
-
-    track_dicts = _serialize_playlist_tracks(playlist)
-
-    return PlaylistResponse(
-        session_id=request.session_id,
-        start_band=playlist.start_band.value,
-        target_state=playlist.target_state.value,
-        total_duration_minutes=playlist.total_duration_minutes,
-        total_steps=playlist.total_transition_steps,
-        day_part=playlist.day_part.value,
-        production_profile=playlist.production_profile,
-        tracks=track_dicts,
-    )
+    therapy_status = raaga_transition_engine.therapy_snapshot(headset_ready=headset_ready)
+    runtime_metrics_store.update_therapy_status(therapy_status)
+    return _serialize_session(session_id)
 
 
-@router.get("/playlist/{session_id}", response_model=PlaylistResponse)
-async def get_playlist(session_id: str):
-    """Retrieve generated playlist (may be called multiple times during playback)"""
+@router.get("/session/{session_id}")
+async def get_therapy_session(session_id: str) -> Dict[str, Any]:
     if session_id not in active_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[session_id]
-
-    if not session["playlist"]:
-        raise HTTPException(status_code=404, detail="No playlist generated yet")
-
-    playlist: TherapyPlaylist = session["playlist"]
-
-    track_dicts = _serialize_playlist_tracks(playlist)
-
-    return PlaylistResponse(
-        session_id=session_id,
-        start_band=playlist.start_band.value,
-        target_state=playlist.target_state.value,
-        total_duration_minutes=playlist.total_duration_minutes,
-        total_steps=playlist.total_transition_steps,
-        day_part=playlist.day_part.value,
-        production_profile=playlist.production_profile,
-        tracks=track_dicts,
-    )
+    return _serialize_session(session_id)
 
 
 @router.post("/playback/update")
-async def update_playback_progress(update: TrackProgressUpdate):
-    """Track playback progress (optional, for logging/analytics)"""
+async def update_playback_progress(update: TherapyPlaybackUpdate) -> Dict[str, Any]:
     if update.session_id not in active_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[update.session_id]
-    session["playback_progress"] = {
-        "track_index": update.track_index,
-        "raga": update.raga_name,
-        "elapsed_seconds": update.elapsed_seconds,
-        "timestamp": datetime.utcnow(),
-    }
-
-    return {
-        "status": "progress_recorded",
-        "session_id": update.session_id,
-    }
+    active_sessions[update.session_id]["playback_updates"].append(
+        {
+            "track_index": update.track_index,
+            "elapsed_seconds": update.elapsed_seconds,
+            "is_playing": update.is_playing,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+    return {"status": "ok"}
 
 
-@router.post("/session/complete/{session_id}")
-async def complete_session(session_id: str):
-    """Mark session as complete and clean up resources"""
+@router.post("/session/stop/{session_id}")
+async def stop_therapy_session(session_id: str) -> Dict[str, Any]:
     if session_id not in active_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    session = active_sessions[session_id]
-    session["completed_at"] = datetime.utcnow()
-
-    return {
-        "status": "session_completed",
-        "session_id": session_id,
-        "duration": (session["completed_at"] - session["created_at"]).total_seconds(),
-    }
-
-
-def _serialize_playlist_tracks(playlist: TherapyPlaylist) -> list[dict]:
-    return [
-        {
-            "order": track.order_in_sequence,
-            "band": track.band.value,
-            "raga": track.raga_name,
-            "file_slug": track.file_slug,
-            "bpm": track.bpm,
-            "lay": track.lay,
-            "feel": track.feel,
-            "duration_seconds": track.duration_seconds,
-            "frequency_range": track.frequency_range_hz,
-            "estimated_start_time_seconds": sum(
-                t.duration_seconds for t in playlist.tracks[: track.order_in_sequence]
-            ),
-        }
-        for track in playlist.tracks
-    ]
-
-
-# ─── Background Tasks ────────────────────────────────────────────────────────
-
-async def _run_simulated_eeg_scan(session_id: str, duration_seconds: int):
-    """Simulate a realistic 15-second EEG scan"""
-    if session_id not in active_sessions:
-        return
-
-    # Randomly select a brain state pattern
-    import random
-    state_choice = random.choice([
-        EEGSimulator.generate_relaxed_pattern,
-        EEGSimulator.generate_focused_pattern,
-        EEGSimulator.generate_sleepy_pattern,
-    ])
-
-    patterns = state_choice(duration_seconds)
-
-    monitoring_service.start_monitoring()
-
-    for alpha, beta, theta in patterns:
-        monitoring_service.add_power_bands(alpha, beta, theta)
-        import time
-        time.sleep(1.0)
-
-    detection = monitoring_service.stop_monitoring()
-    active_sessions[session_id]["eeg_detection"] = detection
-
-
-async def _run_real_eeg_scan(session_id: str, duration_seconds: int):
-    """Run EEG scan using the live Neiry/Capsule listener (port 5001)."""
-    if session_id not in active_sessions:
-        return
-
-    import time
-
-    listener = get_eeg_listener()
-    monitoring_service.window_seconds = duration_seconds
-    monitoring_service.start_monitoring()
-
-    for _ in range(duration_seconds):
-        sample = listener.latest
-        if sample is not None:
-            monitoring_service.add_power_bands(sample.alpha, sample.beta, sample.theta)
-        time.sleep(1.0)
-
-    detection = monitoring_service.stop_monitoring()
-    if detection is None and listener.latest is not None:
-        s = listener.latest
-        detection = EEGStateAnalyzer.create_detection(s.alpha, s.beta, s.theta)
-
-    active_sessions[session_id]["eeg_detection"] = detection
+    active_sessions[session_id]["completed_at"] = datetime.utcnow().isoformat()
+    raaga_transition_engine.stop_session()
+    runtime_store.update(
+        therapy_active=False,
+        therapy_session_id=None,
+        playlist_version=0,
+        therapy_playlist=[],
+        active_raaga="",
+    )
+    runtime_metrics_store.update_therapy_status(
+        raaga_transition_engine.therapy_snapshot(
+            headset_ready=runtime_metrics_store.snapshot().get("headset_ready", False)
+        )
+    )
+    return {"status": "stopped", "session_id": session_id}

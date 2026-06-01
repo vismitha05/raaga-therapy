@@ -4,7 +4,7 @@ import { ImprovementBars, SessionRadar } from "../components/charts/AnalyticsCha
 import { CTAButton, GlassCard } from "../components/ui/Primitives";
 
 export function CompletionScreen() {
-  const { sessionResult, setScreen, resetSession } = useTherapy();
+  const { sessionResult, resetSession } = useTherapy();
   const { before, after } = sessionResult;
 
   return (
@@ -35,7 +35,7 @@ export function CompletionScreen() {
           <p>Neural relaxation improved consistently during the session.</p>
         </div>
 
-        <CTAButton onClick={() => { resetSession(); setScreen("landing"); }}>Start New Session</CTAButton>
+        <CTAButton onClick={resetSession}>Start New Session</CTAButton>
       </GlassCard>
     </div>
   );

@@ -2,7 +2,7 @@ import React from "react";
 import { useTherapy } from "../context/TherapyContext";
 import { CTAButton, GlassCard } from "../components/ui/Primitives";
 
-const OPTIONS = ["Focused", "Relaxed", "Sleep"];
+const OPTIONS = ["T1", "T2", "A1", "A2", "B1", "B2"];
 
 export function StateSelectionScreen() {
   const { targetState, setTargetState, stateMeta, setScreen } = useTherapy();
@@ -15,7 +15,7 @@ export function StateSelectionScreen() {
           {OPTIONS.map((name) => (
             <button key={name} className={`option-card ${targetState === name ? "active" : ""}`} onClick={() => setTargetState(name)}>
               <span className="option-icon">{stateMeta[name].icon}</span>
-              <h3>{name}</h3>
+              <h3>{name} · {stateMeta[name].title}</h3>
               <p>{stateMeta[name].desc}</p>
             </button>
           ))}

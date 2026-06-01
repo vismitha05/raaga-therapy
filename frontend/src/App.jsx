@@ -1,6 +1,9 @@
 import React from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { AudioPlayerProvider } from "./context/AudioPlayerContext";
+import { EEGRealtimeProvider } from "./context/EEGRealtimeContext";
 import { TherapyProvider, useTherapy } from "./context/TherapyContext";
+import { HeadsetSetup } from "./screens/HeadsetSetup";
 import { LandingScreen } from "./screens/LandingScreen";
 import { StateSelectionScreen } from "./screens/StateSelectionScreen";
 import { DurationScreen } from "./screens/DurationScreen";
@@ -9,6 +12,7 @@ import { CompletionScreen } from "./screens/CompletionScreen";
 import "./App.css";
 
 const SCREEN_MAP = {
+  headset: HeadsetSetup,
   landing: LandingScreen,
   state: StateSelectionScreen,
   duration: DurationScreen,
@@ -42,8 +46,12 @@ function AppShell() {
 
 export default function App() {
   return (
-    <TherapyProvider>
-      <AppShell />
-    </TherapyProvider>
+    <EEGRealtimeProvider>
+      <AudioPlayerProvider>
+        <TherapyProvider>
+          <AppShell />
+        </TherapyProvider>
+      </AudioPlayerProvider>
+    </EEGRealtimeProvider>
   );
 }

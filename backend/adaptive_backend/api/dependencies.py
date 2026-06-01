@@ -1,6 +1,10 @@
+from adaptive_backend.eeg.device_manager import device_manager
+from adaptive_backend.eeg.runtime_metrics_store import runtime_metrics_store
 from adaptive_backend.services.realtime.websocket_manager import ConnectionManager
 from adaptive_backend.services.realtime.monitoring_service import RealTimeMonitoringService
+from adaptive_backend.therapy.raaga_transition_engine import RaagaTransitionEngine
 
 
 ws_manager = ConnectionManager()
-monitoring_service = RealTimeMonitoringService(ws_manager)
+raaga_transition_engine = RaagaTransitionEngine()
+monitoring_service = RealTimeMonitoringService(ws_manager, raaga_transition_engine)
