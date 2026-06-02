@@ -398,3 +398,173 @@ class TransitionValidator:
                     f"Frequency jump too large: {jump:.1f} Hz > {TransitionValidator.MAX_FREQ_JUMP} Hz",
                 )
         return True, "Transition is valid"
+
+
+# ---------------------------------------------------------------------------
+# Public helpers implementing the EXACT requested algorithms and math.
+# ---------------------------------------------------------------------------
+
+def state_transition_algorithm(start_band: FrequencyBand, target_state: BrainState) -> List[FrequencyBand]:
+    """
+    State transition algorithm (exact):
+
+    - Use fixed cognitive ladder order: T1 -> T2 -> A1 -> A2 -> B1 -> B2
+    - If start == target: return [start_band] (play the raga for the current band only)
+    - If start < target (index lower): return the ordered list of bands
+      from start+1 up to and including target (ascending order).
+    - If start > target: return the ordered list of bands from start-1
+      down to and including target (descending order). This preserves the
+      intermediate steps and does NOT skip or jump.
+
+    This function delegates to `RagaTherapyEngine.calculate_transition_path`
+    which implements the exact same logic.
+    """
+    return RagaTherapyEngine.calculate_transition_path(start_band, target_state)
+
+
+def state_transition_algorithm_to_band(start_band: FrequencyBand, target_band: FrequencyBand) -> List[FrequencyBand]:
+    """
+    State transition algorithm variant that accepts a target FrequencyBand
+    directly (useful for examples like Current=T1, Target=A2).
+
+    - If start == target: return [start_band]
+    - If start < target: return BAND_ORDER[start_idx+1:target_idx+1]
+    - If start > target: return reversed(BAND_ORDER[target_idx:start_idx])
+    """
+    start_idx = BAND_ORDER.index(start_band)
+    target_idx = BAND_ORDER.index(target_band)
+    if start_idx == target_idx:
+        return [start_band]
+    if start_idx < target_idx:
+        return BAND_ORDER[start_idx + 1 : target_idx + 1]
+    return list(reversed(BAND_ORDER[target_idx:start_idx]))
+
+
+def mathematical_duration_calculation(session_duration_minutes: int, num_raagas: int) -> float:
+    """
+    Mathematical duration calculation (exact):
+
+    - Let SessionDurationMinutes be the user-selected minutes (e.g. 20).
+    - Let N be the number of transition raagas (len(path)).
+    - DurationPerRaaga (minutes) = SessionDurationMinutes / N
+    - DurationPerRaaga (seconds) = DurationPerRaaga (minutes) * 60
+
+    Formula used (single-step):
+        DurationPerRaaga_seconds = (SessionDurationMinutes * 60) / N
+
+    Returns the duration in seconds (float). Caller may format or round
+    for display or playback as required, but the calculation is exact.
+    """
+    if num_raagas <= 0:
+        raise ValueError("num_raagas must be >= 1")
+    return (session_duration_minutes * 60) / num_raagas
+
+
+def raaga_ordering_algorithm(path: List[FrequencyBand], at_time: datetime | None = None) -> List[Tuple[FrequencyBand, RagaSpec]]:
+    """
+    Raaga ordering algorithm:
+
+    - Determine the `DayPart` using `RagaTherapyEngine.resolve_day_part`.
+    - For each band in `path` (order preserved), map the band to the
+      corresponding `RagaSpec` from the day-part matrix.
+    - Do NOT shuffle, randomize, or reorder the `path`.
+    - Return a list of tuples (band, RagaSpec) in the same order as `path`.
+    """
+    day_part = RagaTherapyEngine.resolve_day_part(at_time)
+    ordered: List[Tuple[FrequencyBand, RagaSpec]] = []
+    for band in path:
+        spec = RagaTherapyEngine.get_raga_spec(band, day_part)
+        ordered.append((band, spec))
+    return ordered
+
+
+def playlist_generation_algorithm(
+    session_id: str,
+    detected_band: FrequencyBand,
+    target_state: BrainState,
+    session_duration_minutes: int,
+    at_time: datetime | None = None,
+) -> List[dict]:
+    """
+    Playlist generation algorithm (exact output structure described by user):
+
+    Steps:
+    1. Compute transition path using `state_transition_algorithm`.
+    2. Compute N = number of ragas in path.
+    3. Compute DurationPerRaaga_seconds using
+       `mathematical_duration_calculation(session_duration_minutes, N)`.
+    4. Map each band in the path -> `RagaSpec` according to current daypart
+       using `raaga_ordering_algorithm` while preserving order.
+    5. Produce the final list of dicts in the exact structure:
+       [ { state: "T2", raaga: "Todi", durationSeconds: 400 }, ... ]
+
+    This function implements the PLAYBACK RULES: when one raaga finishes
+    play the next raaga in the generated order; do not reorder, reshuffle
+    or repeat.
+    """
+    path = state_transition_algorithm(detected_band, target_state)
+    N = len(path)
+    duration_per_raaga_seconds = mathematical_duration_calculation(
+        session_duration_minutes, N
+    )
+    ordered = raaga_ordering_algorithm(path, at_time)
+
+    playlist: List[dict] = []
+    for idx, (band, spec) in enumerate(ordered):
+        seconds = duration_per_raaga_seconds
+        # Preserve numeric precision but convert to int when it's effectively integer
+        if abs(seconds - round(seconds)) < 1e-9:
+            seconds_out: int | float = int(round(seconds))
+        else:
+            seconds_out = round(seconds, 6)
+
+        playlist.append(
+            {
+                "state": band.value,
+                "raaga": spec.name,
+                "durationSeconds": seconds_out,
+            }
+        )
+
+    return playlist
+
+
+def playlist_generation_for_target_band(
+    session_id: str,
+    detected_band: FrequencyBand,
+    target_band: FrequencyBand,
+    session_duration_minutes: int,
+    at_time: datetime | None = None,
+) -> List[dict]:
+    """
+    Playlist generation that accepts a target FrequencyBand directly.
+
+    Implements the same exact mathematical and ordering rules but lets
+    callers specify the final band (e.g., Target = A2) as shown in the
+    user's examples.
+    """
+    path = state_transition_algorithm_to_band(detected_band, target_band)
+    N = len(path)
+    duration_per_raaga_seconds = mathematical_duration_calculation(
+        session_duration_minutes, N
+    )
+    ordered = raaga_ordering_algorithm(path, at_time)
+
+    playlist: List[dict] = []
+    for idx, (band, spec) in enumerate(ordered):
+        seconds = duration_per_raaga_seconds
+        if abs(seconds - round(seconds)) < 1e-9:
+            seconds_out: int | float = int(round(seconds))
+        else:
+            seconds_out = round(seconds, 6)
+
+        playlist.append(
+            {
+                "state": band.value,
+                "raaga": spec.name,
+                "durationSeconds": seconds_out,
+            }
+        )
+
+    return playlist
+
