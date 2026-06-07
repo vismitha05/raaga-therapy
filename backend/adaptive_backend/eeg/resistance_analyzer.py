@@ -8,16 +8,20 @@ Inspired by Neiry's official quality indicators.
 from typing import Dict, Literal
 
 # Resistance thresholds in Ohms (typical for EEG electrode quality)
-# These values are empirically derived from Capsule API documentation
-# and match Neiry's quality indicators
+# NOTE: These thresholds are temporary development values based on observed
+# Capsule headset resistance readings (June 2026). They MUST be validated
+# against the official Capsule application and vendor-provided guidance.
+#
+# Use the `GOOD_THRESHOLD` and `WARNING_THRESHOLD` constants to configure
+# the classification boundaries. Quality mapping is:
+#   - `GOOD`: resistance <= GOOD_THRESHOLD
+#   - `WARNING`: GOOD_THRESHOLD < resistance <= WARNING_THRESHOLD
+#   - `BAD`: resistance > WARNING_THRESHOLD
 
-QUALITY_THRESHOLDS = {
-    # Good impedance: < 50 kOhms (excellent signal quality)
-    "GOOD": 50_000,
-    # Warning: 50-100 kOhms (acceptable but marginal)
-    "WARNING": 100_000,
-    # Bad: > 100 kOhms (poor contact, high noise)
-}
+# Temporary development thresholds (observed device resistances):
+# GOOD <= 500,000 Ω, WARNING <= 800,000 Ω, BAD > 800,000 Ω
+GOOD_THRESHOLD = 500_000
+WARNING_THRESHOLD = 800_000
 
 ChannelQuality = Literal["GOOD", "WARNING", "BAD"]
 
@@ -38,9 +42,9 @@ class ResistanceQualityAnalyzer:
         Returns:
             Quality indicator: "GOOD", "WARNING", or "BAD"
         """
-        if resistance_ohms <= QUALITY_THRESHOLDS["GOOD"]:
+        if resistance_ohms <= GOOD_THRESHOLD:
             return "GOOD"
-        elif resistance_ohms <= QUALITY_THRESHOLDS["WARNING"]:
+        elif resistance_ohms <= WARNING_THRESHOLD:
             return "WARNING"
         else:
             return "BAD"

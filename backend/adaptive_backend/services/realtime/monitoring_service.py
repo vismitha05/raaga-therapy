@@ -1,5 +1,7 @@
 import asyncio
 from datetime import datetime
+import json
+import logging
 
 from eeg_bridge import get_eeg_listener
 
@@ -102,6 +104,15 @@ class RealTimeMonitoringService:
             await asyncio.sleep(settings.eeg_poll_interval_seconds)
 
     async def tick(self):
+        # Temporary tracing logger for classification audit (remove after analysis)
+        logger = logging.getLogger("classification_trace")
+        if not logger.handlers:
+            fh = logging.FileHandler("classification_trace.log")
+            fh.setLevel(logging.INFO)
+            fh.setFormatter(logging.Formatter("%(message)s"))
+            logger.addHandler(fh)
+            logger.setLevel(logging.INFO)
+
         capsule_snapshot = runtime_metrics_store.snapshot()
         capsule_state = _capsule_state_from_snapshot(capsule_snapshot)
         headset_ready = capsule_snapshot.get("headset_ready", False)
@@ -133,6 +144,20 @@ class RealTimeMonitoringService:
                 "simulating": False,
                 "timestamp": datetime.utcnow().isoformat(),
             }
+            # Log that capsule metrics path was chosen for instant detection
+            try:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "classification_instant",
+                    "data_source": "CAPSULE_METRICS",
+                    "focus": capsule_state.get("focus"),
+                    "relaxation": capsule_state.get("relaxation"),
+                    "fatigue": capsule_state.get("fatigue"),
+                    "stress": capsule_state.get("stress"),
+                    "classifier_state": instant_state.value,
+                }))
+            except Exception:
+                pass
         else:
             self.buffer.append(sample.to_dict())
             instant_label = sample.state
@@ -149,6 +174,19 @@ class RealTimeMonitoringService:
                 "simulating": self.eeg_listener.simulating,
                 "timestamp": datetime.utcnow().isoformat(),
             }
+            # Log that raw EEG path was chosen for instant detection
+            try:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "classification_instant",
+                    "data_source": "RAW_EEG",
+                    "alpha": sample.alpha,
+                    "beta": sample.beta,
+                    "theta": sample.theta,
+                    "classifier_state": instant_label,
+                }))
+            except Exception:
+                pass
 
         payload.update(_capsule_ws_payload())
 
@@ -167,6 +205,34 @@ class RealTimeMonitoringService:
                 theta=sample.theta,
                 classifier_state=instant_label,
             )
+
+        # Log the derived cognitive state and the inputs used
+        try:
+            if capsule_state is not None:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "derived_state",
+                    "data_source": "CAPSULE_METRICS",
+                    "focus": capsule_state.get("focus"),
+                    "relaxation": capsule_state.get("relaxation"),
+                    "fatigue": capsule_state.get("fatigue"),
+                    "stress": capsule_state.get("stress"),
+                    "classifier_state": instant_state.value,
+                    "derived_state": cognitive_state,
+                }))
+            else:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "derived_state",
+                    "data_source": "RAW_EEG",
+                    "alpha": sample.alpha,
+                    "beta": sample.beta,
+                    "theta": sample.theta,
+                    "classifier_state": instant_label,
+                    "derived_state": cognitive_state,
+                }))
+        except Exception:
+            pass
 
         stability_update = self.raaga_engine.update_stability(cognitive_state)
         payload.update(
@@ -194,6 +260,17 @@ class RealTimeMonitoringService:
                 "stress": capsule_state["stress"],
                 "source": "capsule_metrics",
             }
+            # Log that runtime update will be driven by capsule metrics
+            try:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "runtime_update",
+                    "source": "CAPSULE_METRICS",
+                    "detected_state": detected_state.value,
+                    "confidence": confidence,
+                }))
+            except Exception:
+                pass
         else:
             if not self.buffer.ready():
                 therapy_payload = self.raaga_engine.therapy_snapshot(headset_ready=headset_ready)
@@ -204,6 +281,17 @@ class RealTimeMonitoringService:
             window = self.buffer.snapshot()
             features = extract_features(window)
             detected_state, confidence = detect_state(features)
+            # Log that runtime update will be driven by RAW_EEG (windowed features)
+            try:
+                logger.info(json.dumps({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "runtime_update",
+                    "source": "RAW_EEG_WINDOW",
+                    "detected_state": detected_state.value,
+                    "confidence": confidence,
+                }))
+            except Exception:
+                pass
 
         ui_state = ui_state_label(detected_state.value)
 

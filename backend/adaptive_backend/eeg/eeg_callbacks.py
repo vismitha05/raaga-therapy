@@ -62,9 +62,17 @@ class EEGCallbacks:
         # Update quality indicators
         self.store.update_channel_quality(channel_quality, headset_ready)
         
-        # Print detailed resistance and quality info
+        # Print detailed resistance and quality info per-channel
         quality_stats = self.analyzer.get_quality_stats(channel_quality)
         print(f"[Capsule] resistance: {values}")
+        # Per-channel verbose logging (Channel Name = Value Ω -> Quality)
+        for ch, val in values.items():
+            q = channel_quality.get(ch, "BAD")
+            try:
+                val_int = int(round(float(val)))
+            except Exception:
+                val_int = val
+                print(f"[Capsule] {ch} = {val_int} Ω -> {q}")
         print(f"[Capsule] channel quality: {channel_quality}")
         print(f"[Capsule] quality summary: GOOD={quality_stats['GOOD']} WARNING={quality_stats['WARNING']} BAD={quality_stats['BAD']}")
         print(f"[Capsule] headset ready: {headset_ready}")

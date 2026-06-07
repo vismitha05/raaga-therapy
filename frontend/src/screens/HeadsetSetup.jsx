@@ -6,14 +6,21 @@ const CHANNELS = ["O1", "T3", "T4", "O2"];
 
 function getQualityFromResistance(value, fallbackQuality = "BAD") {
   if (typeof value !== "number") return fallbackQuality;
-  if (value <= 500) return "GOOD";
-  if (value <= 1000) return "WARNING";
+  // Thresholds are in Ohms. Temporary development thresholds based on
+  // observed Capsule headset values (must be validated against vendor app):
+  // GOOD <= 500,000 Ω, WARNING <= 800,000 Ω, BAD > 800,000 Ω
+  if (value <= 500000) return "GOOD";
+  if (value <= 800000) return "WARNING";
   return "BAD";
 }
 
 function formatResistance(value) {
   if (typeof value !== "number") return "—";
-  return Math.round(value);
+  // Display in readable units: use kΩ when appropriate
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toFixed(2)} kΩ`;
+  }
+  return `${Math.round(value)} Ω`;
 }
 
 function qualityIcon(quality) {

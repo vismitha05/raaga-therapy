@@ -75,3 +75,5 @@ Pick **one** matrix from the current clock:
 Example: detected **B2** (21.1–30 Hz), target **sleep**, session **20 min** → 5 ragas → **4 min** each (Khamaj → Bhopali → Yaman → Darbari Kanada → Malkauns in evening window).
 
 Implementation: `backend/adaptive_backend/services/raga_therapy_engine.py`
+
+uvicorn adaptive_backend.main:app --reload

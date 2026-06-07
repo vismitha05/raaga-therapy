@@ -266,7 +266,6 @@ export function AudioPlayerProvider({ children }) {
       }, stepMs);
     } catch (_e) {
       setTransitionState("idle");
-      setError("Failed to switch track smoothly.");
     }
   }
 
